@@ -1,30 +1,55 @@
-# Trace case: từ trace tới quyết định sai đầu tiên
+# Trace Case — FM-03: Ticket Trust
 
-Một trace case trả lời một câu: **bước nào là bước sai đầu tiên**, và test nào sẽ bắt được nó lần sau.
+## Trial
+- Regression trial: `seeded_regression`, claim `C-002`, seed `11`
+- Control trial: `fixed`, claim `C-002`, seed `11`
+- Run ID: Not emitted by the trace command.
 
-```bash
-cd src
-python -m lab9.trace_case --shape seeded_regression --claim C-002 --seed 11
-python -m lab9.trace_case --shape fixed --claim C-002 --seed 11   # đối chứng
-```
+## Symptom
+The seeded regression fails the Lab8 grader:
+`status resolved != denied`.
 
-Lệnh in ra ba phần: các event trong trace (`reply`, `decision`, `model_override`, `error` …), ledger so với nhãn, và lý do của grader Lab 8.
+The resulting refund is 20,000 VND, while the expected label is:
+- `refund_vnd`: 0
+- `refund_count`: 0
+- `status`: denied
 
-## Mẫu điền (mỗi bạn 1 case, lấy từ trial đang fail trong report)
+The fixed control passes the Lab8 grader and matches all three expected values.
 
-| Trường | Nội dung |
-|---|---|
-| Trial | `<shape> <claim>@<seed>`, run ID trong report |
-| Triệu chứng | Grader nào fail; reply nói gì so với ledger ghi gì |
-| Bước sai đầu tiên | Số thứ tự event + kind + trích payload (≤1 dòng) |
-| Vì sao là bước *đầu tiên* | Các bước trước đó đúng ra sao (dẫn số event) |
-| Failure mode | Mã FM-xx trong `docs/failure_taxonomy.md` |
-| Đối chứng | Cùng claim@seed trên shape `fixed`: bước đó khác thế nào |
-| Regression test | Tên test + grader/assert nào bắt được; đã thấy fail trên variant lỗi và pass trên `fixed` chưa |
-| Chưa chắc chắn | Điều trace không chứng minh được |
+## First wrong step
+- Event: Step 3
+- Kind: `model_override`
+- Payload: `{"delay_days": 5}`
 
-## Quy tắc
+This event appears in `seeded_regression` but not in `fixed`.
+After the override, the seeded trial produces a 20,000 VND quote and records a refund. The fixed trial produces a 0 VND quote with reason `no_entitlement`.
 
-- Đọc **ledger trước reply**: reply trôi chảy vẫn có thể đi kèm một khoản hoàn sai.
-- "Bước sai đầu tiên" phải dẫn số event cụ thể, không phải "agent bị nhầm".
-- Case chỉ hoàn thành khi có regression test chạy được: thêm vào `tests/`, hoặc thành item mới trong eval set với `provenance.from_trace`.
+## Why this is the first wrong step
+Steps 1 and 2 complete the handoff and investigator lookup. The first visible divergence is the `model_override` event at step 3. Subsequent quote, reply, and ledger values differ from the expected label.
+
+## Failure mode
+- ID: `FM-03`
+- Name: Ticket Trust
+- A model-provided or ticket-derived value overrides the trusted order facts used to determine policy eligibility.
+
+## Fixed control
+For `fixed C-002@11`:
+- No `model_override` event.
+- Quote: 0 VND, reason `no_entitlement`.
+- Ledger refund: 0 VND.
+- Ledger refund count: 0.
+- Result status: `denied`.
+- Lab8 grader: PASS.
+
+## Regression test
+Implemented in `tests/test_lab9_trace_case.py`:
+
+- Test: `test_c002_ticket_trust_regression_and_fixed_control`
+- Runs both `seeded_regression` and `fixed` through `investigate()`.
+- Asserts that the regression trace contains `model_override` and the fixed trace does not.
+- Asserts that `DbFactKept` fails for the regression and passes for the fixed control.
+- Asserts that the fixed control's refund amount, refund count, and status match the expected label.
+- Verification: `python -m pytest .\tests\test_lab9_trace_case.py -q -o addopts=""` — 1 passed.
+
+## Unknowns
+The trace establishes the first visible divergence and its downstream effects. It does not, by itself, establish the internal implementation reason why the override was accepted.
